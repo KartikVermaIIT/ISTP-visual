@@ -796,134 +796,144 @@ def show_results_dashboard():
     
     # ── Download & View Results ──────────────────────────────────────────────
     st.markdown("---")
-    st.markdown("### 📥 Download & View Classification Results")
-    
-    import glob, os, zipfile
-    from io import BytesIO, StringIO
-    
-    # Resolve data: session_state > disk > generate sample
-    has_session = 'accuracy_csv' in st.session_state and 'area_csv' in st.session_state
-    disk_metrics = sorted(glob.glob('accuracy_metrics_*.csv'))
-    disk_area    = sorted(glob.glob('area_statistics_*.csv'))
-    disk_tif     = sorted(glob.glob('tree_classification_*.tif'))
-    has_disk = bool(disk_metrics or disk_area)
-    
-    if has_session:
-        st.success("✅ Classification results ready (from current session)")
-        accuracy_csv_bytes = st.session_state['accuracy_csv'].encode()
-        area_csv_bytes     = st.session_state['area_csv'].encode()
-        accuracy_fname     = f"accuracy_metrics_{st.session_state.get('results_timestamp','latest')}.csv"
-        area_fname         = f"area_statistics_{st.session_state.get('results_timestamp','latest')}.csv"
-        tif_bytes          = st.session_state.get('tif_bytes')
-        tif_fname          = st.session_state.get('tif_name', 'tree_classification.tif')
-        accuracy_df_view   = pd.read_csv(StringIO(st.session_state['accuracy_csv']))
-        area_df_view       = pd.read_csv(StringIO(st.session_state['area_csv']))
-    elif has_disk:
-        st.success("✅ Found classification result files on disk")
-        accuracy_fname = os.path.basename(disk_metrics[-1]) if disk_metrics else 'accuracy_metrics.csv'
-        area_fname     = os.path.basename(disk_area[-1])    if disk_area    else 'area_statistics.csv'
-        accuracy_csv_bytes = open(disk_metrics[-1], 'rb').read() if disk_metrics else b''
-        area_csv_bytes     = open(disk_area[-1],    'rb').read() if disk_area    else b''
-        tif_bytes  = open(disk_tif[-1], 'rb').read() if disk_tif else None
-        tif_fname  = os.path.basename(disk_tif[-1]) if disk_tif else 'tree_classification.tif'
-        accuracy_df_view = pd.read_csv(disk_metrics[-1]) if disk_metrics else pd.DataFrame()
-        area_df_view     = pd.read_csv(disk_area[-1])    if disk_area    else pd.DataFrame()
+    st.markdown("### 📥 Classification Results")
+
+    import glob as _glob, os as _os, zipfile as _zipfile
+    from io import BytesIO as _BytesIO, StringIO as _StringIO
+
+    # ── Resolve data source: session_state → disk → sample ──────────────
+    _has_session = ('accuracy_csv' in st.session_state and 'area_csv' in st.session_state)
+    _disk_m = sorted(_glob.glob('accuracy_metrics_*.csv'))
+    _disk_a = sorted(_glob.glob('area_statistics_*.csv'))
+    _disk_t = sorted(_glob.glob('tree_classification_*.tif'))
+
+    if _has_session:
+        st.success("✅ Showing results from your classification run")
+        _acc_str  = st.session_state['accuracy_csv']
+        _area_str = st.session_state['area_csv']
+        _ts       = st.session_state.get('results_timestamp', 'latest')
+        _acc_fname  = f"accuracy_metrics_{_ts}.csv"
+        _area_fname = f"area_statistics_{_ts}.csv"
+        _tif_bytes  = st.session_state.get('tif_bytes')
+        _tif_fname  = st.session_state.get('tif_name', 'tree_classification.tif')
+        _acc_bytes  = _acc_str.encode()
+        _area_bytes = _area_str.encode()
+        try:
+            _acc_df  = pd.read_csv(_StringIO(_acc_str))
+            _area_df = pd.read_csv(_StringIO(_area_str))
+        except Exception:
+            _acc_df = pd.DataFrame(); _area_df = pd.DataFrame()
+
+    elif _disk_m or _disk_a:
+        st.success("✅ Found result files on disk")
+        _acc_fname  = _os.path.basename(_disk_m[-1]) if _disk_m else 'accuracy_metrics.csv'
+        _area_fname = _os.path.basename(_disk_a[-1]) if _disk_a else 'area_statistics.csv'
+        try:
+            _acc_bytes  = open(_disk_m[-1],  'rb').read() if _disk_m else b''
+            _area_bytes = open(_disk_a[-1], 'rb').read() if _disk_a else b''
+            _tif_bytes  = open(_disk_t[-1],  'rb').read() if _disk_t else None
+        except Exception:
+            _acc_bytes = b''; _area_bytes = b''; _tif_bytes = None
+        _tif_fname = _os.path.basename(_disk_t[-1]) if _disk_t else 'tree_classification.tif'
+        try:
+            _acc_df  = pd.read_csv(_disk_m[-1]) if _disk_m else pd.DataFrame()
+            _area_df = pd.read_csv(_disk_a[-1]) if _disk_a else pd.DataFrame()
+        except Exception:
+            _acc_df = pd.DataFrame(); _area_df = pd.DataFrame()
+
     else:
-        st.info("ℹ️ No classification has been run yet. Showing sample data you can download to understand the format.")
-        # Generate sample data so downloads always work
-        _names = ['Oak', 'Pine', 'Spruce', 'Beech', 'Birch', 'Fir', 'Mixed Forest']
-        _acc_rows = []
-        for i, n in enumerate(_names):
-            _acc_rows.append({'Class': i, 'Species': n,
-                              'Producer_Accuracy': round(0.75 + i*0.02, 3),
-                              'User_Accuracy': round(0.76 + i*0.02, 3),
-                              'F1_Score': round(0.755 + i*0.02, 3),
-                              'Sample_Count': 80})
-        accuracy_df_view = pd.DataFrame(_acc_rows)
-        area_df_view = pd.DataFrame({
-            'Class': list(range(7)), 'Species': _names,
+        st.info("ℹ️ No classification run yet — showing **sample output** so you can preview the format and test downloads.")
+        _sp = ['Oak', 'Pine', 'Spruce', 'Beech', 'Birch', 'Fir', 'Mixed Forest']
+        _acc_df  = pd.DataFrame([{'Class': i, 'Species': n,
+            'Producer_Accuracy': round(0.75+i*0.02, 3), 'User_Accuracy': round(0.76+i*0.02, 3),
+            'F1_Score': round(0.755+i*0.02, 3), 'Sample_Count': 80} for i, n in enumerate(_sp)])
+        _area_df = pd.DataFrame({'Class': list(range(7)), 'Species': _sp,
             'Area_Hectares': [1254, 892, 673, 541, 412, 389, 290],
-            'Percentage':    [28.6, 20.4, 15.4, 12.4, 9.4, 8.9, 6.6]
-        })
-        accuracy_csv_bytes = accuracy_df_view.to_csv(index=False).encode()
-        area_csv_bytes     = area_df_view.to_csv(index=False).encode()
-        accuracy_fname, area_fname = 'sample_accuracy_metrics.csv', 'sample_area_statistics.csv'
-        tif_bytes, tif_fname = None, 'tree_classification.tif'
-    
-    # ── Tabs ───────────────────────────────────────────────────────────────
-    tab1, tab2, tab3 = st.tabs(["📊 Accuracy Metrics", "🗺️ Area Statistics", "🖼️ Classification Map"])
-    
-    with tab1:
-        st.markdown("#### Accuracy Assessment")
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            st.dataframe(accuracy_df_view, use_container_width=True, hide_index=True)
-        with col2:
+            'Percentage': [28.6, 20.4, 15.4, 12.4, 9.4, 8.9, 6.6]})
+        _acc_bytes  = _acc_df.to_csv(index=False).encode()
+        _area_bytes = _area_df.to_csv(index=False).encode()
+        _acc_fname  = 'sample_accuracy_metrics.csv'
+        _area_fname = 'sample_area_statistics.csv'
+        _tif_bytes  = None
+        _tif_fname  = 'tree_classification.tif'
+
+    # ── BIG download buttons at the very top (not inside tabs/columns) ───
+    st.markdown("#### ⬇️ Download Files")
+    _dl1, _dl2, _dl3 = st.columns(3)
+    with _dl1:
+        st.download_button(
+            label="📊 Accuracy Metrics (.csv)",
+            data=_acc_bytes,
+            file_name=_acc_fname,
+            mime="text/csv",
+            use_container_width=True,
+            type="primary",
+            key="dl_acc"
+        )
+    with _dl2:
+        st.download_button(
+            label="🗺️ Area Statistics (.csv)",
+            data=_area_bytes,
+            file_name=_area_fname,
+            mime="text/csv",
+            use_container_width=True,
+            type="primary",
+            key="dl_area"
+        )
+    with _dl3:
+        if _tif_bytes:
             st.download_button(
-                "📥 Download CSV",
-                accuracy_csv_bytes,
-                file_name=accuracy_fname,
-                mime="text/csv",
-                use_container_width=True,
-                type="primary"
-            )
-    
-    with tab2:
-        st.markdown("#### Area Statistics by Species")
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            st.dataframe(area_df_view, use_container_width=True, hide_index=True)
-            sp_col  = 'Species' if 'Species' in area_df_view.columns else area_df_view.columns[0]
-            ha_col  = 'Area_Hectares' if 'Area_Hectares' in area_df_view.columns else area_df_view.select_dtypes('number').columns[0]
-            fig_pie = px.pie(area_df_view, values=ha_col, names=sp_col,
-                             title='Area Distribution by Species', hole=0.35,
-                             color_discrete_sequence=px.colors.sequential.Greens_r)
-            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig_pie, use_container_width=True)
-        with col2:
-            st.download_button(
-                "📥 Download CSV",
-                area_csv_bytes,
-                file_name=area_fname,
-                mime="text/csv",
-                use_container_width=True,
-                type="primary"
-            )
-    
-    with tab3:
-        st.markdown("#### Classification GeoTIFF Map")
-        st.markdown("""
-        **File format:** GeoTIFF · **Resolution:** 10 m/pixel · **Values:** 0–6 (species classes)
-        
-        Open with: QGIS, ArcGIS, or Python (`rasterio`)
-        """)
-        if tif_bytes:
-            st.download_button(
-                "📥 Download GeoTIFF",
-                tif_bytes,
-                file_name=tif_fname,
+                label="🖼️ Classification Map (.tif)",
+                data=_tif_bytes,
+                file_name=_tif_fname,
                 mime="image/tiff",
-                type="primary"
+                use_container_width=True,
+                type="primary",
+                key="dl_tif"
             )
         else:
-            st.info("GeoTIFF will be available after running classification (Map Visualization → Run & Display).")
-    
-    # ── Download All as ZIP ────────────────────────────────────────────────
-    st.markdown("---")
-    zip_buffer = BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(accuracy_fname, accuracy_csv_bytes)
-        zf.writestr(area_fname,     area_csv_bytes)
-        if tif_bytes:
-            zf.writestr(tif_fname, tif_bytes)
-    
+            st.button("🖼️ Map (.tif) — run first", disabled=True, use_container_width=True)
+
+    # ZIP of everything
+    _zip_buf = _BytesIO()
+    with _zipfile.ZipFile(_zip_buf, 'w', _zipfile.ZIP_DEFLATED) as _zf:
+        if _acc_bytes:  _zf.writestr(_acc_fname,  _acc_bytes)
+        if _area_bytes: _zf.writestr(_area_fname, _area_bytes)
+        if _tif_bytes:  _zf.writestr(_tif_fname,  _tif_bytes)
     st.download_button(
-        "📦 Download All Results as ZIP",
-        zip_buffer.getvalue(),
-        file_name=f"classification_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+        label="📦 Download ALL as ZIP",
+        data=_zip_buf.getvalue(),
+        file_name=f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
         mime="application/zip",
-        type="primary"
+        use_container_width=True,
+        key="dl_zip"
     )
+
+    # ── Inline data preview (always visible) ─────────────────────────────
+    st.markdown("---")
+    st.markdown("#### 📊 Accuracy Metrics — Preview")
+    if not _acc_df.empty:
+        st.dataframe(_acc_df, use_container_width=True, hide_index=True)
+    else:
+        st.warning("No accuracy data available.")
+
+    st.markdown("#### 🗺️ Area Statistics — Preview")
+    if not _area_df.empty:
+        st.dataframe(_area_df, use_container_width=True, hide_index=True)
+        # Pie chart
+        try:
+            _sp_col = 'Species' if 'Species' in _area_df.columns else _area_df.columns[0]
+            _ha_col = 'Area_Hectares' if 'Area_Hectares' in _area_df.columns else \
+                      _area_df.select_dtypes('number').columns[0]
+            _fig_pie = px.pie(_area_df, values=_ha_col, names=_sp_col,
+                              title='Area Distribution by Species', hole=0.35,
+                              color_discrete_sequence=px.colors.sequential.Greens_r)
+            _fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(_fig_pie, use_container_width=True)
+        except Exception:
+            pass
+    else:
+        st.warning("No area data available.")
 
 
 def show_analysis_page():
