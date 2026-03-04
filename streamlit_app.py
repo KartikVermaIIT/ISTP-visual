@@ -974,27 +974,28 @@ def show_results_dashboard():
             else:
                 st.info("No classification map files found. Run classification first.")
         
-        # Download all button
+        # Download all as ZIP - pre-computed so no nested button
         st.markdown("---")
-        if st.button("📦 Download All Results as ZIP", use_container_width=False, type="primary"):
-            try:
-                import zipfile
-                from io import BytesIO
-                
-                zip_buffer = BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    for file_list in result_files.values():
-                        for file_path in file_list:
-                            zip_file.write(file_path, os.path.basename(file_path))
-                
-                st.download_button(
-                    "📥 Download ZIP",
-                    zip_buffer.getvalue(),
-                    file_name=f"classification_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                    mime="application/zip"
-                )
-            except Exception as e:
-                st.error(f"Error creating ZIP: {e}")
+        try:
+            import zipfile
+            from io import BytesIO
+            
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for file_list in result_files.values():
+                    for file_path in file_list:
+                        zip_file.write(file_path, os.path.basename(file_path))
+            
+            st.download_button(
+                "📦 Download All Results as ZIP",
+                zip_buffer.getvalue(),
+                file_name=f"classification_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                mime="application/zip",
+                type="primary",
+                use_container_width=False
+            )
+        except Exception as e:
+            st.error(f"Error creating ZIP: {e}")
     
     else:
         st.warning("""
@@ -1012,93 +1013,123 @@ def show_results_dashboard():
 
 
 def show_analysis_page():
-    """Analysis page with detailed charts"""
+    """Analysis page with detailed charts - uses real result files if available"""
     st.markdown("## 📈 Detailed Analysis")
     
-    class_names = load_class_names()
-    area_df = generate_sample_area_data(tuple(class_names))
+    import glob
     
-    # Tabs for different analyses
-    tab1, tab2, tab3, tab4 = st.tabs(["🌍 Area Statistics", "🎯 Feature Importance", "📊 Comparison", "📉 Trends"])
+    # Load real data if available, otherwise show message
+    area_files = sorted(glob.glob('area_statistics_*.csv'))
+    metrics_files = sorted(glob.glob('accuracy_metrics_*.csv'))
+    
+    has_real_data = bool(area_files and metrics_files)
+    
+    if has_real_data:
+        st.success(f"📊 Showing real classification results from `{os.path.basename(area_files[-1])}`")
+        area_df = pd.read_csv(area_files[-1])
+        metrics_df = pd.read_csv(metrics_files[-1])
+        # Normalise column names
+        species_col = 'Species' if 'Species' in area_df.columns else ('Class' if 'Class' in area_df.columns else area_df.columns[0])
+        area_col = 'Area_Hectares' if 'Area_Hectares' in area_df.columns else area_df.select_dtypes('number').columns[0]
+    else:
+        st.warning("⚠️ No classification results found. Run classification first (Map Visualization → Run & Display). Showing placeholder charts.")
+        class_names = load_class_names()
+        area_df = generate_sample_area_data(tuple(class_names))
+        species_col = 'Class'
+        area_col = 'Area_Hectares'
+        metrics_df = None
+    
+    tab1, tab2, tab3 = st.tabs(["🌍 Area Statistics", "🎯 Accuracy Metrics", "🎯 Feature Importance"])
     
     with tab1:
-        st.markdown("### Area Distribution")
+        st.markdown("### Area Distribution by Species")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.plotly_chart(plot_area_distribution(area_df), use_container_width=True)
+            fig_pie = px.pie(
+                area_df,
+                values=area_col,
+                names=species_col,
+                title='Area Distribution by Species',
+                color_discrete_sequence=px.colors.sequential.Greens_r,
+                hole=0.35
+            )
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            fig_pie.update_layout(height=450)
+            st.plotly_chart(fig_pie, use_container_width=True)
         
         with col2:
-            st.plotly_chart(plot_area_bar_chart(area_df), use_container_width=True)
+            fig_bar = px.bar(
+                area_df.sort_values(area_col, ascending=True),
+                x=area_col,
+                y=species_col,
+                orientation='h',
+                title='Area Coverage by Species',
+                color=area_col,
+                color_continuous_scale='Greens',
+                text=area_col
+            )
+            fig_bar.update_traces(texttemplate='%{text:.0f} ha', textposition='outside')
+            fig_bar.update_layout(height=450, showlegend=False, xaxis_title='Area (Hectares)', yaxis_title='Species')
+            st.plotly_chart(fig_bar, use_container_width=True)
         
         st.markdown("### Detailed Statistics")
         st.dataframe(area_df, use_container_width=True, hide_index=True)
         
-        # Summary statistics
-        col1, col2,col3 = st.columns(3)
-        
+        col1, col2, col3 = st.columns(3)
+        total_ha = area_df[area_col].sum()
+        dominant = area_df.loc[area_df[area_col].idxmax(), species_col]
         with col1:
-            st.metric("Total Area", f"{area_df['Area_Hectares'].sum():,.0f} ha")
-        
+            st.metric("Total Area", f"{total_ha:,.0f} ha")
         with col2:
-            st.metric("Total Area", f"{area_df['Area_km2'].sum():,.2f} km²")
-        
+            st.metric("Total Area", f"{total_ha / 100:.2f} km²")
         with col3:
-            dominant = area_df.loc[area_df['Area_Hectares'].idxmax(), 'Class']
             st.metric("Dominant Species", dominant)
     
     with tab2:
-        st.markdown("### Random Forest Feature Importance")
-        st.plotly_chart(create_feature_importance_chart(), use_container_width=True)
-        
-        st.info("""
-        **Top Contributing Features:**
-        - **EVI (Enhanced Vegetation Index)** - Strong indicator of vegetation health
-        - **NDVI (Normalized Difference Vegetation Index)** - Classic vegetation metric
-        - **VH/VV Ratio** - SAR backscatter ratio sensitive to structure
-        - **Texture Features** - Capture canopy structure patterns
-        """)
+        if has_real_data and metrics_df is not None:
+            st.markdown("### Accuracy Assessment from Classification")
+            st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+            
+            # Plot accuracy bars if columns exist
+            num_cols = [c for c in ['Producer_Accuracy', 'User_Accuracy', 'F1_Score'] if c in metrics_df.columns]
+            id_col = 'Species' if 'Species' in metrics_df.columns else metrics_df.columns[0]
+            
+            if num_cols:
+                plot_df = metrics_df[metrics_df[id_col] != 'Overall'] if 'Overall' in metrics_df[id_col].values else metrics_df
+                fig_acc = go.Figure()
+                colors = ['#66BB6A', '#42A5F5', '#FFA726']
+                labels = {'Producer_Accuracy': 'Producer Accuracy', 'User_Accuracy': 'User Accuracy', 'F1_Score': 'F1-Score'}
+                for col, color in zip(num_cols, colors):
+                    fig_acc.add_trace(go.Bar(
+                        name=labels.get(col, col),
+                        x=plot_df[id_col],
+                        y=plot_df[col],
+                        marker_color=color
+                    ))
+                fig_acc.update_layout(
+                    title='Accuracy Metrics by Species',
+                    xaxis_title='Tree Species',
+                    yaxis_title='Score',
+                    barmode='group',
+                    height=450,
+                    yaxis=dict(range=[0, 1])
+                )
+                st.plotly_chart(fig_acc, use_container_width=True)
+        else:
+            st.info("Run classification to see real accuracy metrics here.")
     
     with tab3:
-        st.markdown("### Natural vs Plantation Forest Comparison")
-        
-        # Generate comparison data
-        comparison_data = pd.DataFrame({
-            'Species': class_names,
-            'Natural': np.random.randint(100, 1000, len(class_names)),
-            'Plantation': np.random.randint(100, 1000, len(class_names))
-        })
-        
-        fig = go.Figure()
-        
-        fig.add_trace(go.Bar(
-            name='Natural Forest',
-            x=comparison_data['Species'],
-            y=comparison_data['Natural'],
-            marker_color='#66BB6A'
-        ))
-        
-        fig.add_trace(go.Bar(
-            name='Plantation Forest',
-            x=comparison_data['Species'],
-            y=comparison_data['Plantation'],
-            marker_color='#FFA726'
-        ))
-        
-        fig.update_layout(
-            title='Forest Type Comparison by Species',
-            xaxis_title='Tree Species',
-            yaxis_title='Area (Hectares)',
-            barmode='group',
-            height=500
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-    
-    with tab4:
-        st.markdown("### Temporal Analysis (Coming Soon)")
-        st.info("Multi-year trend analysis will be available in the next version")
+        st.markdown("### Random Forest Feature Importance")
+        st.plotly_chart(create_feature_importance_chart(), use_container_width=True)
+        st.info("""
+        **Top Contributing Features (from paper):**
+        - **EVI** - Enhanced Vegetation Index (dominant)
+        - **NDVI** - Normalized Difference Vegetation Index
+        - **VH/VV Ratio** - SAR backscatter ratio
+        - **Texture Features** - Canopy structure patterns
+        """)
 
 
 def show_visualization_page():
