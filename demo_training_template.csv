@@ -1,0 +1,5 @@
+longitude,latitude,class,species_name,confidence,collection_date,notes
+-122.5,37.5,0,Oak,high,2019-06-15,Dense canopy
+-122.4,37.6,1,Pine,high,2019-06-15,Young stand
+-122.3,37.7,2,Spruce,medium,2019-06-16,Mixed age
+-122.2,37.8,0,Oak,high,2019-06-16,Old growth
