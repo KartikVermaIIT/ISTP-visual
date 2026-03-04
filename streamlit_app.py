@@ -20,9 +20,8 @@ from io import StringIO
 import time
 
 # Initialize Earth Engine at startup
-try:
+def _init_ee():
     import ee
-    import google.oauth2.credentials
 
     # Priority 1: Streamlit Cloud secrets
     try:
@@ -38,24 +37,27 @@ try:
         ee_project = os.environ.get('EARTHENGINE_PROJECT', 'istp-489219')
 
     if refresh_token:
-        # Authenticate using stored refresh token (for Streamlit Cloud)
-        credentials = google.oauth2.credentials.Credentials(
-            token=None,
-            refresh_token=refresh_token,
-            token_uri='https://oauth2.googleapis.com/token',
-            client_id='517222506229-vsmmajv00ul0bs7p89v5m89qs8eb9359.apps.googleusercontent.com',
-            client_secret='RUP0RZ6e0WWRDnMfATST9g9U',
-            scopes=[
+        # Write credentials file to the location EE expects
+        import pathlib, json
+        creds_path = pathlib.Path.home() / '.config' / 'earthengine' / 'credentials'
+        creds_path.parent.mkdir(parents=True, exist_ok=True)
+        creds_data = {
+            'redirect_uri': 'http://localhost:8085',
+            'refresh_token': refresh_token,
+            'scopes': [
                 'https://www.googleapis.com/auth/earthengine',
                 'https://www.googleapis.com/auth/cloud-platform',
                 'https://www.googleapis.com/auth/drive'
             ]
-        )
-        ee.Initialize(credentials=credentials, project=ee_project)
+        }
+        creds_path.write_text(json.dumps(creds_data))
+        ee.Initialize(project=ee_project)
     else:
         # Local: use default credentials from earthengine-authenticated CLI
         ee.Initialize(project=ee_project)
 
+try:
+    _init_ee()
     EE_INITIALIZED = True
     EE_ERROR = None
 except Exception as e:
