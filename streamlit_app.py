@@ -1574,25 +1574,6 @@ class""")
                 key='download-csv-template'
             )
     
-    if uploaded_file and st.button("🚀 Prepare Training Data", use_container_width=True, type="primary"):
-        with st.spinner("Processing training data..."):
-            # Save uploaded file temporarily
-            temp_file = "temp_training.csv"
-            with open(temp_file, 'wb') as f:
-                f.write(uploaded_file.getbuffer())
-            
-            # Create a simple script runner
-            success, stdout, stderr = run_script_with_output("demo.py", "Processing training data")
-            
-            if success:
-                st.success("✅ Training data prepared successfully!")
-                with st.expander("View Output"):
-                    st.text(stdout)
-            else:
-                st.error("❌ Error preparing training data")
-                with st.expander("View Error Details"):
-                    st.text(stderr)
-    
     st.markdown("---")
     
     # Step 2: Configure Classification
@@ -1663,40 +1644,6 @@ class""")
         - `area_statistics_2026-03-05.csv` - Area by species
         """)
     
-    st.markdown("---")
-    
-    # Step 4: Test Pipeline 
-    st.markdown("### 🧪 Step 4: Test System")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("🧪 Run Tests", use_container_width=True):
-            with st.spinner("Running comprehensive tests..."):
-                success, stdout, stderr = run_script_with_output("test_pipeline.py", "Running tests")
-                
-                if success:
-                    st.success("✅ All tests passed!")
-                    with st.expander("View Test Results"):
-                        st.text(stdout)
-                else:
-                    st.error("❌ Some tests failed")
-                    with st.expander("View Error Details"):
-                        st.text(stderr)
-    
-    with col2:
-        if st.button("🎬 Run Demo", use_container_width=True):
-            with st.spinner("Running demonstrations..."):
-                success, stdout, stderr = run_script_with_output("demo.py", "Running demo")
-                
-                if success:
-                    st.success("✅ Demo completed!")
-                    with st.expander("View Demo Output"):
-                        st.text(stdout)
-                else:
-                    st.error("❌ Demo failed")
-                    with st.expander("View Error Details"):
-                        st.text(stderr)
 
 
 def show_documentation_page():
