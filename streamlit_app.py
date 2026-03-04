@@ -22,25 +22,40 @@ import time
 # Initialize Earth Engine at startup
 try:
     import ee
-    # Try to get project ID from environment variable or use default
-    ee_project = os.environ.get('EARTHENGINE_PROJECT', None)
-    if ee_project:
-        ee.Initialize(project=ee_project)
+    import google.oauth2.credentials
+
+    # Priority 1: Streamlit Cloud secrets
+    try:
+        ee_secrets = st.secrets.get("earthengine", {})
+        refresh_token = ee_secrets.get("refresh_token", None)
+        ee_project = ee_secrets.get("project", None)
+    except Exception:
+        refresh_token = None
+        ee_project = None
+
+    # Priority 2: Environment variable
+    if not ee_project:
+        ee_project = os.environ.get('EARTHENGINE_PROJECT', 'istp-489219')
+
+    if refresh_token:
+        # Authenticate using stored refresh token (for Streamlit Cloud)
+        credentials = google.oauth2.credentials.Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri='https://oauth2.googleapis.com/token',
+            client_id='517222506229-vsmmajv00ul0bs7p89v5m89qs8eb9359.apps.googleusercontent.com',
+            client_secret='RUP0RZ6e0WWRDnMfATST9g9U',
+            scopes=[
+                'https://www.googleapis.com/auth/earthengine',
+                'https://www.googleapis.com/auth/cloud-platform',
+                'https://www.googleapis.com/auth/drive'
+            ]
+        )
+        ee.Initialize(credentials=credentials, project=ee_project)
     else:
-        # Try without project first (for older EE API versions)
-        try:
-            ee.Initialize()
-        except Exception as init_error:
-            # If it requires project, ask user to set it
-            if 'no project found' in str(init_error).lower():
-                raise Exception(
-                    "Earth Engine requires a project ID. Please either:\n"
-                    "1. Set environment variable: EARTHENGINE_PROJECT=your-project-id\n"
-                    "2. Or run: earthengine set_project your-project-id\n"
-                    "3. Get your project ID from: https://console.cloud.google.com/"
-                )
-            else:
-                raise init_error
+        # Local: use default credentials from earthengine-authenticated CLI
+        ee.Initialize(project=ee_project)
+
     EE_INITIALIZED = True
     EE_ERROR = None
 except Exception as e:

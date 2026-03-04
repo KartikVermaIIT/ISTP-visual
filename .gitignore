@@ -37,6 +37,9 @@ wheels/
 .earthengine/
 earthengine-credential.json
 
+# Streamlit secrets (DO NOT COMMIT - add via Streamlit Cloud dashboard)
+.streamlit/secrets.toml
+
 # Data files
 *.tif
 *.tiff
