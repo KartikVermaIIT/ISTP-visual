@@ -756,260 +756,174 @@ def show_results_dashboard():
     """Results dashboard page"""
     st.markdown("## 📊 Results Dashboard")
     
-    # Metrics at the top
-    col1, col2, col3, col4 = st.columns(4)
-    
     class_names = load_class_names()
     confusion = generate_sample_confusion_matrix(len(class_names))
     metrics = calculate_accuracy_metrics(confusion)
     
+    # Top metrics
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric(
-            "Overall Accuracy",
-            f"{metrics['overall_accuracy']:.1%}",
-            delta="Good" if metrics['overall_accuracy'] > 0.8 else "Needs Improvement"
-        )
-    
+        st.metric("Overall Accuracy", f"{metrics['overall_accuracy']:.1%}",
+                  delta="Good" if metrics['overall_accuracy'] > 0.8 else "Needs Improvement")
     with col2:
-        st.metric(
-            "Kappa Coefficient",
-            f"{metrics['kappa']:.3f}",
-            delta="Excellent" if metrics['kappa'] > 0.8 else "Good"
-        )
-    
+        st.metric("Kappa Coefficient", f"{metrics['kappa']:.3f}",
+                  delta="Excellent" if metrics['kappa'] > 0.8 else "Good")
     with col3:
-        mean_producer = np.mean(metrics['producer_accuracy'])
-        st.metric(
-            "Mean Producer's Acc.",
-            f"{mean_producer:.1%}"
-        )
-    
+        st.metric("Mean Producer's Acc.", f"{np.mean(metrics['producer_accuracy']):.1%}")
     with col4:
-        mean_user = np.mean(metrics['user_accuracy'])
-        st.metric(
-            "Mean User's Acc.",
-            f"{mean_user:.1%}"
-        )
+        st.metric("Mean User's Acc.", f"{np.mean(metrics['user_accuracy']):.1%}")
     
     st.markdown("---")
-    
-    # Confusion Matrix and Accuracy
     col1, col2 = st.columns([1.2, 1])
-    
     with col1:
-        st.plotly_chart(
-            plot_confusion_matrix(confusion, class_names),
-            use_container_width=True
-        )
-    
+        st.plotly_chart(plot_confusion_matrix(confusion, class_names), use_container_width=True)
     with col2:
         st.markdown("### 📈 Accuracy Summary")
-        
-        # Create summary table
         summary_df = pd.DataFrame({
             'Class': class_names,
             'Producer': [f"{acc:.1%}" for acc in metrics['producer_accuracy']],
             'User': [f"{acc:.1%}" for acc in metrics['user_accuracy']],
             'F1': [f"{score:.1%}" for score in metrics['f1_scores']]
         })
-        
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
-        
-        st.markdown("### 📊 Class Performance")
-        worst_class = class_names[np.argmin(metrics['f1_scores'])]
         best_class = class_names[np.argmax(metrics['f1_scores'])]
-        
+        worst_class = class_names[np.argmin(metrics['f1_scores'])]
         st.success(f"**Best:** {best_class} ({metrics['f1_scores'].max():.1%})")
         st.warning(f"**Worst:** {worst_class} ({metrics['f1_scores'].min():.1%})")
     
     st.markdown("---")
+    st.plotly_chart(plot_accuracy_by_class(metrics, class_names), use_container_width=True)
     
-    # Per-class accuracy chart
-    st.plotly_chart(
-        plot_accuracy_by_class(metrics, class_names),
-        use_container_width=True
-    )
-    
-    # Download and View Results
+    # ── Download & View Results ──────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### 📥 Download & View Classification Results")
     
-    st.info("📁 Download and view your classification output files")
+    import glob, os, zipfile
+    from io import BytesIO, StringIO
     
-    # Check if result files exist
-    import glob
-    import os
-    from datetime import datetime
+    # Resolve data: session_state > disk > generate sample
+    has_session = 'accuracy_csv' in st.session_state and 'area_csv' in st.session_state
+    disk_metrics = sorted(glob.glob('accuracy_metrics_*.csv'))
+    disk_area    = sorted(glob.glob('area_statistics_*.csv'))
+    disk_tif     = sorted(glob.glob('tree_classification_*.tif'))
+    has_disk = bool(disk_metrics or disk_area)
     
-    result_files = {
-        'tif': sorted(glob.glob('tree_classification_*.tif')),
-        'metrics': sorted(glob.glob('accuracy_metrics_*.csv')),
-        'area': sorted(glob.glob('area_statistics_*.csv'))
-    }
-    
-    if any(result_files.values()):
-        st.success("✅ Found classification result files!")
-        
-        # Create tabs for different result types
-        tab1, tab2, tab3 = st.tabs(["📊 Accuracy Metrics", "🗺️ Area Statistics", "🖼️ Classification Map"])
-        
-        with tab1:
-            st.markdown("#### Accuracy Assessment Results")
-            if result_files['metrics']:
-                latest_metrics = result_files['metrics'][-1]
-                
-                # View button and download button
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    try:
-                        metrics_df = pd.read_csv(latest_metrics)
-                        st.dataframe(metrics_df, use_container_width=True)
-                    except:
-                        st.warning("Could not load metrics file")
-                
-                with col2:
-                    with open(latest_metrics, 'rb') as f:
-                        st.download_button(
-                            "📥 Download",
-                            f.read(),
-                            file_name=os.path.basename(latest_metrics),
-                            mime="text/csv",
-                            use_container_width=True
-                        )
-            else:
-                st.info("No accuracy metrics files found. Run classification first.")
-        
-        with tab2:
-            st.markdown("#### Area Statistics by Species")
-            if result_files['area']:
-                latest_area = result_files['area'][-1]
-                
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    try:
-                        area_df = pd.read_csv(latest_area)
-                        st.dataframe(area_df, use_container_width=True)
-                        
-                        # Generate quick visualization
-                        if 'Class' in area_df.columns and 'Area_Hectares' in area_df.columns:
-                            fig = px.pie(
-                                area_df, 
-                                values='Area_Hectares', 
-                                names='Class',
-                                title='Area Distribution by Species',
-                                hole=0.4
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
-                    except Exception as e:
-                        st.warning(f"Could not load area file: {e}")
-                
-                with col2:
-                    with open(latest_area, 'rb') as f:
-                        st.download_button(
-                            "📥 Download",
-                            f.read(),
-                            file_name=os.path.basename(latest_area),
-                            mime="text/csv",
-                            use_container_width=True
-                        )
-            else:
-                st.info("No area statistics files found. Run classification first.")
-        
-        with tab3:
-            st.markdown("#### Classification GeoTIFF Map")
-            if result_files['tif']:
-                latest_tif = result_files['tif'][-1]
-                
-                st.info(f"📁 **File:** `{os.path.basename(latest_tif)}`")
-                
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    st.markdown("""
-                    **Classification Map Details:**
-                    - Format: GeoTIFF
-                    - Resolution: 10m per pixel
-                    - Projection: WGS84 / UTM
-                    - Values: 0-6 (tree species classes)
-                    
-                    **How to use:**
-                    1. Download the file
-                    2. Open in QGIS, ArcGIS, or Python (rasterio/GDAL)
-                    3. Apply class colors for visualization
-                    """)
-                
-                with col2:
-                    try:
-                        with open(latest_tif, 'rb') as f:
-                            st.download_button(
-                                "📥 Download TIF",
-                                f.read(),
-                                file_name=os.path.basename(latest_tif),
-                                mime="image/tiff",
-                                use_container_width=True
-                            )
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-                
-                # Try to show preview using rasterio if available
-                try:
-                    import rasterio
-                    from rasterio.plot import show
-                    import matplotlib.pyplot as plt
-                    
-                    with rasterio.open(latest_tif) as src:
-                        st.markdown("**Preview:**")
-                        
-                        fig, ax = plt.subplots(figsize=(10, 10))
-                        show(src, ax=ax, cmap='tab10', title='Classification Map')
-                        st.pyplot(fig)
-                        
-                        st.info(f"Map size: {src.width} × {src.height} pixels | Bands: {src.count}")
-                except ImportError:
-                    st.info("💡 Install rasterio to preview TIF files: `pip install rasterio`")
-                except Exception as e:
-                    st.warning("Could not generate preview")
-            else:
-                st.info("No classification map files found. Run classification first.")
-        
-        # Download all as ZIP - pre-computed so no nested button
-        st.markdown("---")
-        try:
-            import zipfile
-            from io import BytesIO
-            
-            zip_buffer = BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                for file_list in result_files.values():
-                    for file_path in file_list:
-                        zip_file.write(file_path, os.path.basename(file_path))
-            
-            st.download_button(
-                "📦 Download All Results as ZIP",
-                zip_buffer.getvalue(),
-                file_name=f"classification_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                mime="application/zip",
-                type="primary",
-                use_container_width=False
-            )
-        except Exception as e:
-            st.error(f"Error creating ZIP: {e}")
-    
+    if has_session:
+        st.success("✅ Classification results ready (from current session)")
+        accuracy_csv_bytes = st.session_state['accuracy_csv'].encode()
+        area_csv_bytes     = st.session_state['area_csv'].encode()
+        accuracy_fname     = f"accuracy_metrics_{st.session_state.get('results_timestamp','latest')}.csv"
+        area_fname         = f"area_statistics_{st.session_state.get('results_timestamp','latest')}.csv"
+        tif_bytes          = st.session_state.get('tif_bytes')
+        tif_fname          = st.session_state.get('tif_name', 'tree_classification.tif')
+        accuracy_df_view   = pd.read_csv(StringIO(st.session_state['accuracy_csv']))
+        area_df_view       = pd.read_csv(StringIO(st.session_state['area_csv']))
+    elif has_disk:
+        st.success("✅ Found classification result files on disk")
+        accuracy_fname = os.path.basename(disk_metrics[-1]) if disk_metrics else 'accuracy_metrics.csv'
+        area_fname     = os.path.basename(disk_area[-1])    if disk_area    else 'area_statistics.csv'
+        accuracy_csv_bytes = open(disk_metrics[-1], 'rb').read() if disk_metrics else b''
+        area_csv_bytes     = open(disk_area[-1],    'rb').read() if disk_area    else b''
+        tif_bytes  = open(disk_tif[-1], 'rb').read() if disk_tif else None
+        tif_fname  = os.path.basename(disk_tif[-1]) if disk_tif else 'tree_classification.tif'
+        accuracy_df_view = pd.read_csv(disk_metrics[-1]) if disk_metrics else pd.DataFrame()
+        area_df_view     = pd.read_csv(disk_area[-1])    if disk_area    else pd.DataFrame()
     else:
-        st.warning("""
-        ⚠️ No result files found in the current directory.
+        st.info("ℹ️ No classification has been run yet. Showing sample data you can download to understand the format.")
+        # Generate sample data so downloads always work
+        _names = ['Oak', 'Pine', 'Spruce', 'Beech', 'Birch', 'Fir', 'Mixed Forest']
+        _acc_rows = []
+        for i, n in enumerate(_names):
+            _acc_rows.append({'Class': i, 'Species': n,
+                              'Producer_Accuracy': round(0.75 + i*0.02, 3),
+                              'User_Accuracy': round(0.76 + i*0.02, 3),
+                              'F1_Score': round(0.755 + i*0.02, 3),
+                              'Sample_Count': 80})
+        accuracy_df_view = pd.DataFrame(_acc_rows)
+        area_df_view = pd.DataFrame({
+            'Class': list(range(7)), 'Species': _names,
+            'Area_Hectares': [1254, 892, 673, 541, 412, 389, 290],
+            'Percentage':    [28.6, 20.4, 15.4, 12.4, 9.4, 8.9, 6.6]
+        })
+        accuracy_csv_bytes = accuracy_df_view.to_csv(index=False).encode()
+        area_csv_bytes     = area_df_view.to_csv(index=False).encode()
+        accuracy_fname, area_fname = 'sample_accuracy_metrics.csv', 'sample_area_statistics.csv'
+        tif_bytes, tif_fname = None, 'tree_classification.tif'
+    
+    # ── Tabs ───────────────────────────────────────────────────────────────
+    tab1, tab2, tab3 = st.tabs(["📊 Accuracy Metrics", "🗺️ Area Statistics", "🖼️ Classification Map"])
+    
+    with tab1:
+        st.markdown("#### Accuracy Assessment")
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.dataframe(accuracy_df_view, use_container_width=True, hide_index=True)
+        with col2:
+            st.download_button(
+                "📥 Download CSV",
+                accuracy_csv_bytes,
+                file_name=accuracy_fname,
+                mime="text/csv",
+                use_container_width=True,
+                type="primary"
+            )
+    
+    with tab2:
+        st.markdown("#### Area Statistics by Species")
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.dataframe(area_df_view, use_container_width=True, hide_index=True)
+            sp_col  = 'Species' if 'Species' in area_df_view.columns else area_df_view.columns[0]
+            ha_col  = 'Area_Hectares' if 'Area_Hectares' in area_df_view.columns else area_df_view.select_dtypes('number').columns[0]
+            fig_pie = px.pie(area_df_view, values=ha_col, names=sp_col,
+                             title='Area Distribution by Species', hole=0.35,
+                             color_discrete_sequence=px.colors.sequential.Greens_r)
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(fig_pie, use_container_width=True)
+        with col2:
+            st.download_button(
+                "📥 Download CSV",
+                area_csv_bytes,
+                file_name=area_fname,
+                mime="text/csv",
+                use_container_width=True,
+                type="primary"
+            )
+    
+    with tab3:
+        st.markdown("#### Classification GeoTIFF Map")
+        st.markdown("""
+        **File format:** GeoTIFF · **Resolution:** 10 m/pixel · **Values:** 0–6 (species classes)
         
-        **To generate results:**
-        1. Go to **🚀 Run Pipeline** page
-        2. Upload training data and run classification
-        3. Results will be saved as:
-           - `tree_classification_YYYY-MM-DD.tif`
-           - `accuracy_metrics_YYYY-MM-DD.csv`  
-           - `area_statistics_YYYY-MM-DD.csv`
-        4. Return here to download and view them
+        Open with: QGIS, ArcGIS, or Python (`rasterio`)
         """)
+        if tif_bytes:
+            st.download_button(
+                "📥 Download GeoTIFF",
+                tif_bytes,
+                file_name=tif_fname,
+                mime="image/tiff",
+                type="primary"
+            )
+        else:
+            st.info("GeoTIFF will be available after running classification (Map Visualization → Run & Display).")
+    
+    # ── Download All as ZIP ────────────────────────────────────────────────
+    st.markdown("---")
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(accuracy_fname, accuracy_csv_bytes)
+        zf.writestr(area_fname,     area_csv_bytes)
+        if tif_bytes:
+            zf.writestr(tif_fname, tif_bytes)
+    
+    st.download_button(
+        "📦 Download All Results as ZIP",
+        zip_buffer.getvalue(),
+        file_name=f"classification_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+        mime="application/zip",
+        type="primary"
+    )
 
 
 def show_analysis_page():
@@ -1435,6 +1349,18 @@ Map.centerObject(roi, {zoom_level});
             accuracy_df = pd.concat([accuracy_df, overall], ignore_index=True)
             accuracy_df.to_csv(f'accuracy_metrics_{timestamp}.csv', index=False)
             st.info(f"✅ Generated: accuracy_metrics_{timestamp}.csv")
+            
+            # Store in session_state so Results Dashboard can access them
+            st.session_state['results_timestamp'] = timestamp
+            st.session_state['accuracy_csv'] = accuracy_df.to_csv(index=False)
+            st.session_state['area_csv'] = area_df.to_csv(index=False)
+            try:
+                with open(f'tree_classification_{timestamp}.tif', 'rb') as _f:
+                    st.session_state['tif_bytes'] = _f.read()
+                    st.session_state['tif_name'] = f'tree_classification_{timestamp}.tif'
+            except Exception:
+                st.session_state['tif_bytes'] = None
+                st.session_state['tif_name'] = f'tree_classification_{timestamp}.tif'
             
             progress_bar.progress(100)
             status_text.text("✅ Classification complete! All files saved locally.")
