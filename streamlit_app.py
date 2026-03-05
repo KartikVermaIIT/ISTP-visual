@@ -1177,256 +1177,49 @@ Map.centerObject(roi, {zoom_level});
     with col3:
         st.markdown("&nbsp;")
         st.markdown("&nbsp;")
-        run_auto = st.button("🚀 Run & Display", use_container_width=True, type="primary")
-    
-    if run_auto:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        try:
-            import ee
-            import requests
-            import zipfile
-            import io
-            
-            # Step 1: Define study area
-            status_text.text("⏳ Step 1/6: Setting up study area...")
-            progress_bar.progress(15)
-            
-            aoi = ee.Geometry.Rectangle([center_lon - 0.1, center_lat - 0.1, 
-                                         center_lon + 0.1, center_lat + 0.1])
-            
-            # Step 2: Load and process Sentinel-2
-            status_text.text("⏳ Step 2/6: Loading Sentinel-2 imagery...")
-            progress_bar.progress(30)
-            
-            s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
-                .filterBounds(aoi) \
-                .filterDate('2023-06-01', '2023-09-30') \
-                .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20)) \
-                .median() \
-                .clip(aoi)
-            
-            # Step 3: Calculate indices (NDVI, NDWI, etc.)
-            status_text.text("⏳ Step 3/6: Computing vegetation indices...")
-            progress_bar.progress(45)
-            
-            ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI')
-            ndwi = s2.normalizedDifference(['B3', 'B8']).rename('NDWI')
-            
-            # Combine bands
-            features = s2.select(['B2', 'B3', 'B4', 'B8']).addBands([ndvi, ndwi])
-            
-            # Step 4: Simulate classification (K-means clustering as demo)
-            status_text.text("⏳ Step 4/6: Running classification...")
-            progress_bar.progress(60)
-            
-            # Use unsupervised classification as demo
-            training = features.sample(
-                region=aoi,
-                scale=10,
-                numPixels=1000,
-                seed=42
-            )
-            
-            clusterer = ee.Clusterer.wekaKMeans(7).train(training)
-            classified = features.cluster(clusterer).select('cluster').toByte()
-            
-            # Step 5: Download results locally
-            status_text.text("⏳ Step 5/6: Downloading results to local files...")
-            progress_bar.progress(75)
-            
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            
-            # Download the classification as GeoTIFF
+        show_classified_result = st.button("🗺️ Show Result on Map", use_container_width=True, type="primary")
+
+    # Show classified result from session_state if pipeline was run
+    if show_classified_result or st.session_state.get('classified_ee') is not None:
+        if 'classified_ee' in st.session_state and st.session_state['classified_ee'] is not None:
             try:
-                download_url = classified.getDownloadUrl({
-                    'region': aoi,
-                    'scale': 10,
-                    'filePerBand': False,
-                    'format': 'GEO_TIFF'
-                })
-                
-                # Download the file
-                response = requests.get(download_url, timeout=300)
-                response.raise_for_status()
-                
-                # If it's a zip, extract it
-                if download_url.endswith('.zip') or response.headers.get('content-type') == 'application/zip':
-                    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-                        # Find the tif file in the zip
-                        tif_files = [f for f in z.namelist() if f.endswith('.tif')]
-                        if tif_files:
-                            tif_content = z.read(tif_files[0])
-                            with open(f'tree_classification_{timestamp}.tif', 'wb') as f:
-                                f.write(tif_content)
-                else:
-                    # Direct TIFF download
-                    with open(f'tree_classification_{timestamp}.tif', 'wb') as f:
-                        f.write(response.content)
-                
-                st.info(f"✅ Downloaded: tree_classification_{timestamp}.tif")
-                
-            except Exception as e:
-                st.warning(f"⚠️ Could not download full TIFF (area may be too large): {str(e)}")
-                st.info("Creating placeholder file instead. For large areas, use the EE Asset export option.")
-                # Create a placeholder file
-                with open(f'tree_classification_{timestamp}.tif', 'w') as f:
-                    f.write(f"Classification completed at {timestamp}\n")
-                    f.write(f"Asset path: users/{ee_username}/{auto_asset_name}\n")
-                    f.write(f"Bounds: {[center_lon - 0.1, center_lat - 0.1, center_lon + 0.1, center_lat + 0.1]}\n")
-            
-            # Step 6: Generate accuracy metrics and area statistics
-            status_text.text("⏳ Step 6/6: Generating metrics and statistics...")
-            progress_bar.progress(90)
-            
-            # Calculate area statistics from the classified image
-            try:
-                # Get pixel counts per class
-                class_areas = classified.reduceRegion(
-                    reducer=ee.Reducer.frequencyHistogram(),
-                    geometry=aoi,
-                    scale=10,
-                    maxPixels=1e9
-                )
-                
-                # Get the histogram and compute
-                histogram = class_areas.getInfo().get('cluster', {})
-                
-                # Convert to pandas DataFrame
-                class_names = ['Oak', 'Pine', 'Birch', 'Spruce', 'Maple', 'Poplar', 'Mixed']
-                area_data = []
-                
-                total_pixels = sum(histogram.values()) if histogram else 0
-                pixel_area_ha = 0.01  # 10m * 10m = 100 m² = 0.01 hectares
-                
-                for class_id in range(7):
-                    pixel_count = histogram.get(str(class_id), 0)
-                    area_ha = pixel_count * pixel_area_ha
-                    percentage = (pixel_count / total_pixels * 100) if total_pixels > 0 else 0
-                    
-                    area_data.append({
-                        'Class': class_id,
-                        'Species': class_names[class_id],
-                        'Pixel_Count': pixel_count,
-                        'Area_Hectares': round(area_ha, 2),
-                        'Percentage': round(percentage, 2)
-                    })
-                
-                area_df = pd.DataFrame(area_data)
-                area_df.to_csv(f'area_statistics_{timestamp}.csv', index=False)
-                st.info(f"✅ Generated: area_statistics_{timestamp}.csv")
-                
-            except Exception as e:
-                st.warning(f"⚠️ Could not compute exact areas: {str(e)}")
-                # Generate sample area statistics
-                area_data = []
-                for i, name in enumerate(['Oak', 'Pine', 'Birch', 'Spruce', 'Maple', 'Poplar', 'Mixed']):
-                    area = np.random.uniform(500, 1500)
-                    area_data.append({
-                        'Class': i,
-                        'Species': name,
-                        'Pixel_Count': int(area * 100),
-                        'Area_Hectares': round(area, 2),
-                        'Percentage': 0
-                    })
-                area_df = pd.DataFrame(area_data)
-                area_df['Percentage'] = round(area_df['Area_Hectares'] / area_df['Area_Hectares'].sum() * 100, 2)
-                area_df.to_csv(f'area_statistics_{timestamp}.csv', index=False)
-            
-            # Generate accuracy metrics (simulated for K-means, as it's unsupervised)
-            accuracy_data = []
-            for i, name in enumerate(['Oak', 'Pine', 'Birch', 'Spruce', 'Maple', 'Poplar', 'Mixed']):
-                accuracy_data.append({
-                    'Class': i,
-                    'Species': name,
-                    'Producer_Accuracy': round(np.random.uniform(0.75, 0.95), 3),
-                    'User_Accuracy': round(np.random.uniform(0.75, 0.95), 3),
-                    'F1_Score': round(np.random.uniform(0.75, 0.95), 3),
-                    'Sample_Count': np.random.randint(50, 150)
-                })
-            
-            accuracy_df = pd.DataFrame(accuracy_data)
-            # Add overall metrics
-            overall = pd.DataFrame([{
-                'Class': 'Overall',
-                'Species': 'All Species',
-                'Producer_Accuracy': round(accuracy_df['Producer_Accuracy'].mean(), 3),
-                'User_Accuracy': round(accuracy_df['User_Accuracy'].mean(), 3),
-                'F1_Score': round(accuracy_df['F1_Score'].mean(), 3),
-                'Sample_Count': accuracy_df['Sample_Count'].sum()
-            }])
-            accuracy_df = pd.concat([accuracy_df, overall], ignore_index=True)
-            accuracy_df.to_csv(f'accuracy_metrics_{timestamp}.csv', index=False)
-            st.info(f"✅ Generated: accuracy_metrics_{timestamp}.csv")
-            
-            # Store in session_state so Results Dashboard can access them
-            st.session_state['results_timestamp'] = timestamp
-            st.session_state['accuracy_csv'] = accuracy_df.to_csv(index=False)
-            st.session_state['area_csv'] = area_df.to_csv(index=False)
-            try:
-                with open(f'tree_classification_{timestamp}.tif', 'rb') as _f:
-                    st.session_state['tif_bytes'] = _f.read()
-                    st.session_state['tif_name'] = f'tree_classification_{timestamp}.tif'
-            except Exception:
-                st.session_state['tif_bytes'] = None
-                st.session_state['tif_name'] = f'tree_classification_{timestamp}.tif'
-            
-            progress_bar.progress(100)
-            status_text.text("✅ Classification complete! All files saved locally.")
-            
-            st.success(f"""
-            ✅ **Classification Complete! Files Ready for Download**
-            
-            📁 **Local Files Created:**
-            - `tree_classification_{timestamp}.tif` - Classification raster
-            - `accuracy_metrics_{timestamp}.csv` - Accuracy assessment
-            - `area_statistics_{timestamp}.csv` - Area by species
-            
-            🎉 **Go to Results Dashboard** to view and download your results!
-            
-            **Preview classification below:**
-            """)
-            
-            # Display quick preview
-            m_preview = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_level)
-            
-            class_vis = {
-                'min': 0,
-                'max': 6,
-                'palette': custom_colors
-            }
-            
-            map_id = classified.getMapId(class_vis)
-            folium.TileLayer(
-                tiles=map_id['tile_fetcher'].url_format,
-                attr='Google Earth Engine',
-                name='Classification Preview',
-                overlay=True,
-                control=True
-            ).add_to(m_preview)
-            
-            folium.LayerControl().add_to(m_preview)
-            
-            folium_static(m_preview, width=1200, height=600)
-            
-            st.info(f"""
-            💡 **Next Steps:**
-            1. Wait for export to complete (check EE tasks page)
-            2. Once complete, load it using the asset path: `{asset_path}`
-            3. Or use the "Load Asset" button below
-            """)
-            
-        except Exception as e:
-            status_text.text("❌ Error occurred")
-            progress_bar.progress(0)
-            st.error(f"❌ Error: {str(e)}")
-            st.info("""
-            **Troubleshooting:**
-            - Make sure you have Earth Engine write permissions
-            - Check your username format: should be without 'users/' prefix
-            - Ensure you have sufficient Earth Engine quota
-            """)
+                import ee as _ee
+                classified = st.session_state['classified_ee']
+                _species = st.session_state.get('species_names',
+                    ['Oak','Pine','Spruce','Beech','Birch','Fir','Mixed Forest'])
+                _palette = ['#2d7d32','#1b5e20','#4caf50','#8bc34a','#cddc39','#00897b','#795548']
+
+                _vis = {'min': 0, 'max': len(_species)-1, 'palette': _palette[:len(_species)]}
+                _map_id = classified.getMapId(_vis)
+
+                m_cls = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_level)
+                folium.TileLayer(
+                    tiles=_map_id['tile_fetcher'].url_format,
+                    attr='Google Earth Engine',
+                    name='Classification Result',
+                    overlay=True, control=True
+                ).add_to(m_cls)
+                folium.LayerControl().add_to(m_cls)
+
+                oa = st.session_state.get('overall_accuracy', 0)
+                kp = st.session_state.get('kappa', 0)
+                ts = st.session_state.get('results_timestamp', 'latest')
+                st.success(f"🌲 Classified map from pipeline run `{ts}` — OA: **{oa:.1%}** | κ: **{kp:.3f}**")
+                folium_static(m_cls, width=1200, height=600)
+
+                # Species legend
+                leg_cols = st.columns(len(_species))
+                for i, (c, s) in enumerate(zip(_palette, _species)):
+                    with leg_cols[i]:
+                        st.markdown(
+                            f'<div style="background:{c};padding:4px 8px;border-radius:4px;'
+                            f'color:white;text-align:center;font-size:12px">{s}</div>',
+                            unsafe_allow_html=True
+                        )
+            except Exception as _e:
+                st.error(f"Could not render classified map: {_e}")
+        else:
+            st.info("ℹ️ No classification result yet. Run the pipeline first: **🚀 Run Classification Pipeline** → click **RUN FULL PIPELINE**.")
     
     st.markdown("---")
     
@@ -1501,115 +1294,332 @@ Map.centerObject(roi, {zoom_level});
 
 
 def show_run_pipeline_page():
-    """Page to run the classification pipeline"""
-    st.markdown("## 🚀 Run Classification Pipeline")
-    
-    st.info("Execute the tree species classification workflow step by step")
-    
-    # Step 1: Prepare Training Data
-    st.markdown("### 📝 Step 1: Prepare Training Data")
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        uploaded_file = st.file_uploader("Upload training data CSV", type=['csv'])
-        
-        if uploaded_file is not None:
-            df = pd.read_csv(uploaded_file)
-            st.success(f"✅ Loaded {len(df)} samples")
-            st.dataframe(df.head(), use_container_width=True)
-    
-    with col2:
-        st.markdown("**Required columns:**")
-        st.code("""longitude
-latitude
-class""")
-        
-        if st.button("📥 Download Template"):
-            template_df = pd.DataFrame({
-                'longitude': [-122.5, -122.4, -122.3],
-                'latitude': [37.5, 37.6, 37.7],
-                'class': [0, 1, 2],
-                'species_name': ['Oak', 'Pine', 'Spruce']
-            })
-            csv = template_df.to_csv(index=False)
-            st.download_button(
-                "Download CSV Template",
-                csv,
-                "training_template.csv",
-                "text/csv",
-                key='download-csv-template'
+    """
+    Full classification pipeline page.
+    Training happens entirely on Google Earth Engine servers using:
+      - Multi-seasonal Sentinel-2 (10 bands + 9 spectral indices) × 4 seasons
+      - Multi-seasonal Sentinel-1 (VV/VH + 4 radar indices) × 4 seasons
+      - EVI and VH temporal gradients (3 each)
+      - GLCM texture features (up to 8) from NIR band
+      - Annual 20th/80th percentiles for S2 and S1
+      - DEM slope + 8-direction one-hot aspect
+      - Random Forest: 71 trees (smileRandomForest via GEE)
+      - 80/20 train/validation split for accuracy
+    """
+    from io import StringIO as _SIO, BytesIO as _BIO
+    import zipfile as _zip
+
+    st.markdown("## 🚀 Tree Species Classification Pipeline")
+    st.markdown("""
+    This page runs the **complete paper methodology** on Google Earth Engine.
+    Upload your GPS training points → configure the area → hit **Run**.
+    The model trains and classifies entirely on GEE servers; results are downloaded here.
+    """)
+
+    # ── EE status ──────────────────────────────────────────────────────────
+    if not EE_INITIALIZED:
+        st.error(f"❌ Earth Engine not initialized: {EE_ERROR}")
+        st.info("Add your EE credentials to `.streamlit/secrets.toml` or authenticate locally.")
+        return
+
+    st.success("✅ Earth Engine connected")
+
+    # ── Step 1: Training data ──────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📝 Step 1 — Training Data")
+
+    help_csv = """**Required columns:**
+- `longitude` (decimal degrees, WGS84)
+- `latitude`  (decimal degrees, WGS84)  
+- `class`     (integer 0 … N-1)
+
+Optional: `species_name` column for display only.
+Minimum 50 points per class recommended."""
+
+    col_up, col_tmpl = st.columns([3, 1])
+    with col_up:
+        uploaded = st.file_uploader(
+            "Upload training data CSV",
+            type=['csv'],
+            help=help_csv
+        )
+    with col_tmpl:
+        st.markdown("&nbsp;")
+        tmpl = pd.DataFrame({
+            'longitude':    [10.05, 10.15, 10.25, 10.35, 10.45, 10.10, 10.20],
+            'latitude':     [48.05, 48.15, 48.25, 48.35, 48.45, 48.10, 48.20],
+            'class':        [0, 1, 2, 3, 4, 5, 6],
+            'species_name': ['Oak','Pine','Spruce','Beech','Birch','Fir','Mixed Forest'],
+        })
+        st.download_button(
+            "📥 Download Template CSV",
+            tmpl.to_csv(index=False).encode(),
+            file_name="training_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.caption("Use `sample_training_data.csv` (560 pts) for a quick test")
+
+    # Parse uploaded file or fall back to sample
+    _training_df = None
+    if uploaded is not None:
+        try:
+            _training_df = pd.read_csv(uploaded)
+            for req in ['longitude', 'latitude', 'class']:
+                if req not in _training_df.columns:
+                    st.error(f"❌ Missing required column: `{req}`")
+                    _training_df = None
+                    break
+            if _training_df is not None:
+                st.success(f"✅ {len(_training_df)} training points loaded")
+                st.dataframe(_training_df.head(10), use_container_width=True, hide_index=True)
+                _class_ids = sorted(_training_df['class'].unique().tolist())
+                st.info(f"Classes detected: {_class_ids} → {len(_class_ids)} species")
+        except Exception as e:
+            st.error(f"Error reading CSV: {e}")
+    else:
+        try:
+            _training_df = pd.read_csv('sample_training_data.csv')
+            st.info("ℹ️ No file uploaded — using `sample_training_data.csv` (560 GPS points, 7 species, Bavaria)")
+            st.dataframe(_training_df.head(10), use_container_width=True, hide_index=True)
+        except Exception:
+            st.warning("Upload a training CSV to proceed.")
+
+    if _training_df is None:
+        return
+
+    # Infer class count and let user name the species
+    _class_ids = sorted(_training_df['class'].unique().tolist())
+    _n_classes = len(_class_ids)
+
+    # ── Step 2: Species name mapping ─────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🌲 Step 2 — Species Names")
+    st.caption("Name each integer class. These appear in all outputs. Must match the `class` values in your CSV.")
+
+    # Auto-fill from 'species_name' column if present
+    _default_names = {}
+    if 'species_name' in _training_df.columns:
+        for cid in _class_ids:
+            row = _training_df[_training_df['class'] == cid]
+            if not row.empty:
+                _default_names[cid] = row['species_name'].iloc[0]
+
+    _fallback = ['Oak','Pine','Spruce','Beech','Birch','Fir','Mixed Forest',
+                 'Larch','Alder','Willow','Poplar','Maple']
+
+    _name_cols = st.columns(min(_n_classes, 4))
+    _species_names = []
+    for i, cid in enumerate(_class_ids):
+        with _name_cols[i % 4]:
+            default = _default_names.get(cid, _fallback[i] if i < len(_fallback) else f'Species_{cid}')
+            name = st.text_input(f"Class {cid}", value=default, key=f"sp_name_{cid}")
+            _species_names.append(name)
+
+    # ── Step 3: Study area & year ─────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📍 Step 3 — Study Area & Year")
+    st.caption("Define the bounding box to classify. Smaller areas (< 500 km²) process faster.")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        _lon_min = st.number_input("Longitude Min (West)", value=10.0, format="%.4f",
+                                   help="WGS84 longitude of western boundary")
+        _lat_min = st.number_input("Latitude Min (South)", value=48.0, format="%.4f",
+                                   help="WGS84 latitude of southern boundary")
+        _year = st.selectbox("Classification Year", [2019, 2020, 2021, 2022, 2023, 2024],
+                              index=4, help="Year used for all seasonal composites")
+    with col_b:
+        _lon_max = st.number_input("Longitude Max (East)", value=10.5, format="%.4f")
+        _lat_max = st.number_input("Latitude Max (North)", value=48.5, format="%.4f")
+        _val_split = st.slider(
+            "Validation split (%)", min_value=10, max_value=40, value=20,
+            help="% of training points held out for accuracy assessment"
+        ) / 100.0
+
+    # AOI area estimate
+    _deg_area = (_lon_max - _lon_min) * (_lat_max - _lat_min)
+    _km2_approx = _deg_area * 111.32 * 111.32 * np.cos(np.radians((_lat_min + _lat_max) / 2))
+    if _lon_max <= _lon_min or _lat_max <= _lat_min:
+        st.error("❌ Invalid bounding box: max must be greater than min.")
+        return
+    st.info(f"📐 AOI area ≈ {_km2_approx:.0f} km² ({_deg_area:.4f}° × {_deg_area:.4f}°) | "
+            f"Seasons: spring/summer/autumn/winter {_year}")
+
+    # ── Step 4: Run ───────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🚀 Step 4 — Train & Classify")
+
+    st.info("""**What happens when you click Run:**
+1. Load 4-season Sentinel-2 composites (cloud-masked, 10 bands + 9 spectral indices)
+2. Load 4-season Sentinel-1 composites (VV/VH + 4 radar indices)
+3. Compute EVI & VH temporal gradients (3 each)
+4. Compute GLCM texture features from NIR band (up to 8)
+5. Extract annual 20th/80th percentiles (S2 + S1)
+6. Add DEM slope + 8-direction one-hot aspect
+7. Sample all features at your GPS training points
+8. **Train Random Forest (71 trees) on GEE servers**
+9. Classify every pixel in the AOI
+10. Evaluate accuracy on held-out validation points → confusion matrix, OA, kappa
+11. Compute area statistics (hectares per species)
+12. Download results here""")
+
+    if st.button("▶️ RUN FULL PIPELINE", use_container_width=True, type="primary"):
+
+        if not EE_INITIALIZED:
+            st.error("Earth Engine is not initialized. Cannot run pipeline.")
+            return
+
+        _progress  = st.progress(0)
+        _status    = st.empty()
+        _log_box   = st.expander("📋 Detailed Progress Log", expanded=True)
+        _log_lines = []
+
+        def _update(msg):
+            _log_lines.append(msg)
+            _status.text(msg)
+            _log_box.text("\n".join(_log_lines[-20:]))
+            # Rough progress estimate from log length
+            step_pct = min(len(_log_lines) * 6, 90)
+            _progress.progress(step_pct)
+
+        try:
+            import ee as _ee
+            from classification_pipeline import run_full_pipeline, download_classified_tif
+
+            _aoi_coords = [_lon_min, _lat_min, _lon_max, _lat_max]
+
+            _update("🚀 Starting pipeline...")
+            results = run_full_pipeline(
+                aoi_coords      = _aoi_coords,
+                year            = int(_year),
+                training_df     = _training_df,
+                class_col       = 'class',
+                class_names     = _species_names,
+                validation_split= _val_split,
+                status_callback = _update,
             )
-    
-    st.markdown("---")
-    
-    # Step 2: Configure Classification
-    st.markdown("### ⚙️ Step 2: Configure Classification")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.text_input("Study Area Name", "My Forest Classification")
-        
-        st.markdown("**Bounding Box:**")
-        lon_min = st.number_input("Longitude Min", value=-122.5, format="%.4f")
-        lat_min = st.number_input("Latitude Min", value=37.5, format="%.4f")
-    
-    with col2:
-        st.selectbox("Classification Year", [2019, 2020, 2021, 2022, 2023, 2024])
-        
-        st.markdown("**&nbsp;**")
-        lon_max = st.number_input("Longitude Max", value=-122.2, format="%.4f")
-        lat_max = st.number_input("Latitude Max", value=37.8, format="%.4f")
-    
-    if st.button("💾 Save Configuration", use_container_width=True):
-        config_dict = {
-            'lon_min': lon_min, 'lat_min': lat_min,
-            'lon_max': lon_max, 'lat_max': lat_max
-        }
-        st.success("✅ Configuration saved")
-        st.json(config_dict)
-    
-    st.markdown("---")
-    
-    # Step 3: Run Classification
-    st.markdown("### 🎯 Step 3: Run Classification")
-    
-    st.warning("⚠️ **Note:** Classification requires Earth Engine authentication and typically takes 30-90 minutes")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        run_feature_extraction = st.checkbox("Extract Features", value=True)
-    
-    with col2:
-        run_training = st.checkbox("Train Classifier", value=True)
-    
-    with col3:
-        run_classification = st.checkbox("Classify Area", value=True)
-    
-    if st.button("▶️ RUN CLASSIFICATION", use_container_width=True, type="primary"):
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # Simulate progress
-        steps = ['Loading satellite data', 'Extracting features', 'Training classifier', 'Classifying pixels']
-        
-        for i, step in enumerate(steps):
-            status_text.text(f"🔄 {step}...")
-            progress_bar.progress((i + 1) / len(steps))
-            time.sleep(1)
-        
-        status_text.text("✅ Classification complete!")
-        st.success("🎉 Classification completed! Results exported to Google Drive")
-        
-        # Show mock results
-        st.markdown("**Output Files:**")
-        st.info("""
-        - `tree_classification_2026-03-05.tif` - Classification map
-        - `accuracy_metrics_2026-03-05.csv` - Accuracy assessment
-        - `area_statistics_2026-03-05.csv` - Area by species
-        """)
+
+            _update("⬇️ Downloading classified GeoTIFF from EE...")
+            _ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            _tif_bytes = download_classified_tif(
+                results['classified_ee'], results['aoi'], scale=10
+            )
+
+            _progress.progress(100)
+            _status.text("✅ Pipeline complete!")
+
+            # ── Save all results to session_state ─────────────────────────
+            st.session_state['results_timestamp']  = _ts
+            st.session_state['accuracy_csv']       = results['metrics_df'].to_csv(index=False)
+            st.session_state['area_csv']            = results['area_df'].to_csv(index=False)
+            st.session_state['tif_bytes']           = _tif_bytes
+            st.session_state['tif_name']            = f'tree_classification_{_ts}.tif'
+            st.session_state['cm_array']            = results['cm_array']
+            st.session_state['overall_accuracy']    = results['overall_accuracy']
+            st.session_state['kappa']               = results['kappa']
+            st.session_state['species_names']       = _species_names
+            st.session_state['classified_ee']       = results['classified_ee']
+
+            # Also save CSV files to disk for Results Dashboard disk fallback
+            results['metrics_df'].to_csv(f'accuracy_metrics_{_ts}.csv', index=False)
+            results['area_df'].to_csv(f'area_statistics_{_ts}.csv', index=False)
+            if _tif_bytes:
+                with open(f'tree_classification_{_ts}.tif', 'wb') as _f:
+                    _f.write(_tif_bytes)
+
+            # ── Show results immediately ───────────────────────────────────
+            st.success(f"""
+✅ **Classification Complete!**
+— Overall Accuracy: **{results['overall_accuracy']:.1%}**
+— Kappa Coefficient: **{results['kappa']:.3f}**
+— Species: {', '.join(_species_names)}
+→ Go to **Results Dashboard** for full download & charts.
+""")
+
+            # Confusion matrix heatmap
+            _cm = results['cm_array']
+            import plotly.figure_factory as ff
+            st.markdown("#### Confusion Matrix (Validation Set)")
+            _fig_cm = ff.create_annotated_heatmap(
+                z=_cm.tolist(),
+                x=_species_names,
+                y=_species_names,
+                colorscale='Greens',
+                showscale=True,
+            )
+            _fig_cm.update_layout(
+                xaxis_title="Predicted", yaxis_title="Actual",
+                height=450
+            )
+            st.plotly_chart(_fig_cm, use_container_width=True)
+
+            # Metrics table
+            st.markdown("#### Per-class Accuracy")
+            st.dataframe(results['metrics_df'], use_container_width=True, hide_index=True)
+
+            # Area chart
+            st.markdown("#### Area by Species")
+            _adf = results['area_df']
+            _fig_area = px.bar(
+                _adf, x='Species', y='Area_Hectares',
+                color='Species', title='Classified Area per Species (hectares)',
+                color_discrete_sequence=px.colors.sequential.Greens_r,
+            )
+            st.plotly_chart(_fig_area, use_container_width=True)
+
+            # Download buttons
+            st.markdown("#### ⬇️ Download Results")
+            _dc1, _dc2, _dc3 = st.columns(3)
+            with _dc1:
+                st.download_button(
+                    "📊 Accuracy Metrics (.csv)",
+                    results['metrics_df'].to_csv(index=False).encode(),
+                    file_name=f'accuracy_metrics_{_ts}.csv',
+                    mime='text/csv', type='primary', use_container_width=True,
+                    key='run_dl_acc'
+                )
+            with _dc2:
+                st.download_button(
+                    "🗺️ Area Statistics (.csv)",
+                    results['area_df'].to_csv(index=False).encode(),
+                    file_name=f'area_statistics_{_ts}.csv',
+                    mime='text/csv', type='primary', use_container_width=True,
+                    key='run_dl_area'
+                )
+            with _dc3:
+                if _tif_bytes:
+                    st.download_button(
+                        "🖼️ Class Map (.tif)",
+                        _tif_bytes,
+                        file_name=f'tree_classification_{_ts}.tif',
+                        mime='image/tiff', type='primary', use_container_width=True,
+                        key='run_dl_tif'
+                    )
+                else:
+                    st.warning("TIF too large for direct download — use EE Asset export instead.")
+
+            # ZIP all
+            _zip_buf = _BIO()
+            with _zip.ZipFile(_zip_buf, 'w', _zip.ZIP_DEFLATED) as _zf:
+                _zf.writestr(f'accuracy_metrics_{_ts}.csv', results['metrics_df'].to_csv(index=False))
+                _zf.writestr(f'area_statistics_{_ts}.csv',  results['area_df'].to_csv(index=False))
+                if _tif_bytes:
+                    _zf.writestr(f'tree_classification_{_ts}.tif', _tif_bytes)
+            st.download_button(
+                "📦 Download ALL as ZIP",
+                _zip_buf.getvalue(),
+                file_name=f'classification_results_{_ts}.zip',
+                mime='application/zip',
+                use_container_width=True,
+                key='run_dl_zip'
+            )
+
+        except Exception as _e:
+            _progress.progress(0)
+            st.error(f"❌ Pipeline error: {_e}")
+            import traceback
+            st.code(traceback.format_exc(), language='python')
     
 
 
